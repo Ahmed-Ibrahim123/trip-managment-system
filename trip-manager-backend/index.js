@@ -80,6 +80,7 @@ const initDb = async () => {
     `);
     await run('add bookings.trip_id', `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL;`);
     await run('add bookings.no_of_persons', `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_of_persons INTEGER NOT NULL DEFAULT 1;`);
+    await run('drop not null trip_name', `ALTER TABLE bookings ALTER COLUMN trip_name DROP NOT NULL;`);
 
     // 4. Migrate old trip_name text data into dedicated legacy trips
     //    Create one legacy trip PER unique old trip_name to avoid duplicate-mobile violations
@@ -458,24 +459,49 @@ app.post('/api/bookings', verifyToken, async (req, res) => {
         return res.status(400).json({ error: 'Client name, mobile number, trip, and number of persons are required.' });
     }
 
-    if (parseInt(no_of_persons) < 1) {
+    const parsedPersons = parseInt(no_of_persons);
+    const parsedTripId = parseInt(trip_id);
+
+    if (isNaN(parsedPersons) || parsedPersons < 1) {
         return res.status(400).json({ error: 'Number of persons must be at least 1.' });
     }
 
-    // Check for duplicate: same mobile number + same trip
     try {
+        // Fetch trip to verify it exists and get trip_name
+        const tripRes = await pool.query('SELECT trip_name FROM trips WHERE id = $1', [parsedTripId]);
+        if (tripRes.rows.length === 0) {
+            return res.status(404).json({ error: 'Selected trip does not exist.' });
+        }
+        const tripName = tripRes.rows[0].trip_name;
+
+        // Check for duplicate: same mobile number + same trip
         const dupCheck = await pool.query(
             'SELECT id FROM bookings WHERE mobile_number = $1 AND trip_id = $2',
-            [mobile_number, trip_id]
+            [mobile_number, parsedTripId]
         );
         if (dupCheck.rows.length > 0) {
             return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
         }
 
-        const result = await pool.query(
-            'INSERT INTO bookings (client_name, mobile_number, trip_id, no_of_persons, notes, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [client_name, mobile_number, trip_id, no_of_persons, notes || null, createdBy]
+        // Check if legacy trip_name column exists in bookings table
+        const hasLegacyCol = await pool.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_name='bookings' AND column_name='trip_name';`
         );
+
+        let result;
+        if (hasLegacyCol.rows.length > 0) {
+            result = await pool.query(
+                `INSERT INTO bookings (client_name, mobile_number, trip_id, trip_name, no_of_persons, notes, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+                [client_name, mobile_number, parsedTripId, tripName, parsedPersons, notes || null, createdBy]
+            );
+        } else {
+            result = await pool.query(
+                `INSERT INTO bookings (client_name, mobile_number, trip_id, no_of_persons, notes, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+                [client_name, mobile_number, parsedTripId, parsedPersons, notes || null, createdBy]
+            );
+        }
 
         // Fetch joined data for response
         const joined = await pool.query(
@@ -483,13 +509,13 @@ app.post('/api/bookings', verifyToken, async (req, res) => {
             [result.rows[0].id]
         );
 
-        res.status(201).json(joined.rows[0]);
+        res.status(201).json(joined.rows[0] || result.rows[0]);
     } catch (err) {
         console.error('Error creating booking:', err);
         if (err.code === '23505') {
             return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
         }
-        res.status(500).json({ error: 'Server Error' });
+        res.status(500).json({ error: err.message || 'Server Error' });
     }
 });
 
@@ -498,22 +524,43 @@ app.put('/api/bookings/:id', verifyToken, async (req, res) => {
     const { id } = req.params;
     const { client_name, mobile_number, trip_id, no_of_persons, notes } = req.body;
 
+    const parsedPersons = parseInt(no_of_persons);
+    const parsedTripId = parseInt(trip_id);
+
     try {
+        // Fetch trip to get trip_name if needed
+        const tripRes = await pool.query('SELECT trip_name FROM trips WHERE id = $1', [parsedTripId]);
+        const tripName = tripRes.rows[0]?.trip_name || '';
+
         // Check for duplicate excluding current booking
         const dupCheck = await pool.query(
             'SELECT id FROM bookings WHERE mobile_number = $1 AND trip_id = $2 AND id != $3',
-            [mobile_number, trip_id, id]
+            [mobile_number, parsedTripId, id]
         );
         if (dupCheck.rows.length > 0) {
             return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
         }
 
-        const result = await pool.query(
-            `UPDATE bookings
-             SET client_name = $1, mobile_number = $2, trip_id = $3, no_of_persons = $4, notes = $5
-             WHERE id = $6 RETURNING *`,
-            [client_name, mobile_number, trip_id, no_of_persons, notes || null, id]
+        const hasLegacyCol = await pool.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_name='bookings' AND column_name='trip_name';`
         );
+
+        let result;
+        if (hasLegacyCol.rows.length > 0) {
+            result = await pool.query(
+                `UPDATE bookings
+                 SET client_name = $1, mobile_number = $2, trip_id = $3, trip_name = $4, no_of_persons = $5, notes = $6
+                 WHERE id = $7 RETURNING *`,
+                [client_name, mobile_number, parsedTripId, tripName, parsedPersons, notes || null, id]
+            );
+        } else {
+            result = await pool.query(
+                `UPDATE bookings
+                 SET client_name = $1, mobile_number = $2, trip_id = $3, no_of_persons = $4, notes = $5
+                 WHERE id = $6 RETURNING *`,
+                [client_name, mobile_number, parsedTripId, parsedPersons, notes || null, id]
+            );
+        }
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Booking not found' });
@@ -524,13 +571,13 @@ app.put('/api/bookings/:id', verifyToken, async (req, res) => {
             [result.rows[0].id]
         );
 
-        res.json({ message: 'Booking updated successfully', booking: joined.rows[0] });
+        res.json({ message: 'Booking updated successfully', booking: joined.rows[0] || result.rows[0] });
     } catch (err) {
         console.error('Error updating booking:', err);
         if (err.code === '23505') {
             return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
         }
-        res.status(500).json({ error: 'Server error updating booking' });
+        res.status(500).json({ error: err.message || 'Server error updating booking' });
     }
 });
 
