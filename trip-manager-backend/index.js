@@ -10,16 +10,14 @@ const PORT = process.env.PORT || 5000;
 
 // 1. Middleware
 app.use(cors());
-app.use(express.json()); // Allows Express to read JSON bodies from React
+app.use(express.json());
 
 // 2. PostgreSQL Connection Pool
 const pool = new Pool(
     process.env.DATABASE_URL
         ? {
             connectionString: process.env.DATABASE_URL,
-            ssl: {
-                rejectUnauthorized: false
-            }
+            ssl: { rejectUnauthorized: false }
         }
         : {
             user: process.env.DB_USER,
@@ -29,36 +27,112 @@ const pool = new Pool(
             port: process.env.DB_PORT,
         }
 );
-// Automatically create required tables on server startup if they don't exist
-const initDb = async () => {
-    try {
-        await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
 
-      CREATE TABLE IF NOT EXISTS bookings (
-        id SERIAL PRIMARY KEY,
-        client_name VARCHAR(255) NOT NULL,
-        mobile_number VARCHAR(50) NOT NULL,
-        trip_name VARCHAR(255) NOT NULL,
-        notes TEXT,
-        created_by VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-        console.log('Database tables verified/created successfully.');
+// ==========================================
+// DATABASE INITIALIZATION & MIGRATION
+// ==========================================
+const initDb = async () => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // --- Users table: add role column if missing ---
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'employee',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        // Add role column to existing tables if it doesn't exist
+        await client.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'employee';
+        `);
+        // Ensure OlaSoliman is always admin
+        await client.query(`
+            UPDATE users SET role = 'admin' WHERE username = 'OlaSoliman';
+        `);
+
+        // --- Trips table ---
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS trips (
+                id SERIAL PRIMARY KEY,
+                trip_name VARCHAR(255) NOT NULL,
+                trip_date DATE NOT NULL,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // --- Bookings table: full migration ---
+        // Create bookings table if it doesn't exist (new schema)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS bookings (
+                id SERIAL PRIMARY KEY,
+                client_name VARCHAR(255) NOT NULL,
+                mobile_number VARCHAR(50) NOT NULL,
+                trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+                no_of_persons INTEGER NOT NULL DEFAULT 1,
+                notes TEXT,
+                created_by VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // Add new columns to bookings if upgrading from old schema
+        await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL;`);
+        await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_of_persons INTEGER NOT NULL DEFAULT 1;`);
+
+        // Migrate old trip_name text data: create a "Legacy" trip and assign orphaned bookings
+        const legacyCheck = await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name='bookings' AND column_name='trip_name';`);
+        if (legacyCheck.rows.length > 0) {
+            // Check if there are any bookings with trip_name but no trip_id
+            const orphanedBookings = await client.query(`SELECT COUNT(*) FROM bookings WHERE trip_id IS NULL AND trip_name IS NOT NULL AND trip_name != '';`);
+            if (parseInt(orphanedBookings.rows[0].count) > 0) {
+                // Create legacy trip if it doesn't exist
+                const legacyTrip = await client.query(`
+                    INSERT INTO trips (trip_name, trip_date, notes)
+                    VALUES ('Legacy Bookings', CURRENT_DATE, 'Auto-created for migrated bookings')
+                    ON CONFLICT DO NOTHING
+                    RETURNING id;
+                `);
+                let legacyTripId = legacyTrip.rows[0]?.id;
+                if (!legacyTripId) {
+                    const existing = await client.query(`SELECT id FROM trips WHERE trip_name = 'Legacy Bookings' LIMIT 1;`);
+                    legacyTripId = existing.rows[0]?.id;
+                }
+                if (legacyTripId) {
+                    await client.query(`UPDATE bookings SET trip_id = $1 WHERE trip_id IS NULL;`, [legacyTripId]);
+                }
+            }
+        }
+
+        // Add unique constraint on (mobile_number, trip_id) if not already present
+        await client.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'bookings_mobile_trip_unique'
+                ) THEN
+                    ALTER TABLE bookings ADD CONSTRAINT bookings_mobile_trip_unique UNIQUE (mobile_number, trip_id);
+                END IF;
+            END$$;
+        `);
+
+        await client.query('COMMIT');
+        console.log('Database tables verified/migrated successfully.');
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Error initializing database tables:', err.message);
+    } finally {
+        client.release();
     }
 };
 
-// Run table initialization
 initDb();
-// Test database connection on startup
+
 pool.query('SELECT NOW()', (err, res) => {
     if (err) {
         console.error('Database connection error:', err.stack);
@@ -68,7 +142,7 @@ pool.query('SELECT NOW()', (err, res) => {
 });
 
 // ==========================================
-// HEALTH CHECK ROUTE (Prevents HTML 404 on Root)
+// HEALTH CHECK
 // ==========================================
 app.get('/', (req, res) => {
     res.json({ status: 'ok', message: 'TripManager API is live' });
@@ -79,7 +153,7 @@ app.get('/', (req, res) => {
 // ==========================================
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
         return res.status(401).json({ error: 'Access denied. No token provided.' });
@@ -87,41 +161,50 @@ const verifyToken = (req, res, next) => {
 
     try {
         const verified = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_key');
-        req.user = verified; // Contains id and username
+        req.user = verified; // Contains id, username, role
         next();
     } catch (err) {
         return res.status(403).json({ error: 'Invalid or expired token' });
     }
 };
 
+const requireAdmin = (req, res, next) => {
+    if (!req.user || req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required.' });
+    }
+    next();
+};
+
 // ==========================================
 // AUTHENTICATION ROUTES
 // ==========================================
 app.post('/api/register', async (req, res) => {
-    const { username, password, adminSecret } = req.body;
+    const { username, password, adminSecret, role } = req.body;
     const expectedSecret = process.env.ADMIN_SECRET_PASSWORD || 'admin123';
 
     if (adminSecret !== expectedSecret) {
-        return res.status(403).json({ error: "Invalid admin password confirmation." });
+        return res.status(403).json({ error: 'Invalid admin password confirmation.' });
     }
+
+    const assignedRole = (role === 'admin' || role === 'employee') ? role : 'employee';
 
     try {
         const existingUser = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
         if (existingUser.rows.length > 0) {
-            return res.status(400).json({ error: "Username already exists" });
+            return res.status(400).json({ error: 'Username already exists' });
         }
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
         const newUserResult = await pool.query(
-            'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username',
-            [username, hashedPassword]
+            'INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id, username, role',
+            [username, hashedPassword, assignedRole]
         );
 
-        res.status(201).json({ message: "User registered successfully", user: newUserResult.rows[0] });
+        res.status(201).json({ message: 'User registered successfully', user: newUserResult.rows[0] });
     } catch (err) {
-        console.error("Register error:", err.message);
+        console.error('Register error:', err.message);
         res.status(500).json({ error: 'Server Error' });
     }
 });
@@ -133,45 +216,47 @@ app.post('/api/login', async (req, res) => {
         const userResult = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
         let user = userResult.rows[0];
 
+        // Auto-create OlaSoliman as admin on first login
         if (!user && username === 'OlaSoliman') {
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(password, salt);
             const newUserResult = await pool.query(
-                'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *',
-                [username, hashedPassword]
+                'INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING *',
+                [username, hashedPassword, 'admin']
             );
             user = newUserResult.rows[0];
         }
 
         if (!user) {
-            return res.status(401).json({ error: "Invalid Username or Password" });
+            return res.status(401).json({ error: 'Invalid Username or Password' });
         }
 
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            return res.status(401).json({ error: "Invalid Username or Password" });
+            return res.status(401).json({ error: 'Invalid Username or Password' });
         }
 
+        // Include role in JWT payload
         const token = jwt.sign(
-            { id: user.id, username: user.username },
+            { id: user.id, username: user.username, role: user.role },
             process.env.JWT_SECRET || 'fallback_secret_key',
-            { expiresIn: '1h' }
+            { expiresIn: '8h' }
         );
 
-        res.json({ token });
+        res.json({ token, role: user.role, username: user.username });
 
     } catch (err) {
-        console.error("Login server error:", err.message);
+        console.error('Login server error:', err.message);
         res.status(500).json({ error: 'Server Error' });
     }
 });
 
 // ==========================================
-// EMPLOYEE ROUTES
+// EMPLOYEE / USER MANAGEMENT ROUTES
 // ==========================================
 app.get('/api/employees', verifyToken, async (req, res) => {
     try {
-        const employees = await pool.query('SELECT id, username, created_at FROM users ORDER BY created_at DESC');
+        const employees = await pool.query('SELECT id, username, role, created_at FROM users ORDER BY created_at DESC');
         res.json(employees.rows);
     } catch (err) {
         console.error('Error fetching employees:', err);
@@ -179,7 +264,7 @@ app.get('/api/employees', verifyToken, async (req, res) => {
     }
 });
 
-app.delete('/api/employees/:id', verifyToken, async (req, res) => {
+app.delete('/api/employees/:id', verifyToken, requireAdmin, async (req, res) => {
     const { id } = req.params;
 
     try {
@@ -200,7 +285,6 @@ app.delete('/api/employees/:id', verifyToken, async (req, res) => {
         }
 
         const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id, username;', [id]);
-
         res.json({ message: 'Employee deleted successfully', employee: result.rows[0] });
     } catch (err) {
         console.error('Error deleting employee:', err);
@@ -209,63 +293,234 @@ app.delete('/api/employees/:id', verifyToken, async (req, res) => {
 });
 
 // ==========================================
+// TRIPS ROUTES
+// ==========================================
+
+// GET all trips (all authenticated users — needed for booking dropdown)
+app.get('/api/trips', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT t.id, t.trip_name, t.trip_date, t.notes, t.created_at,
+                COUNT(b.id) AS booking_count,
+                COALESCE(SUM(b.no_of_persons), 0) AS total_persons
+            FROM trips t
+            LEFT JOIN bookings b ON b.trip_id = t.id
+            GROUP BY t.id
+            ORDER BY t.trip_date DESC, t.created_at DESC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching trips:', err);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+// GET single trip
+app.get('/api/trips/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query(`
+            SELECT t.id, t.trip_name, t.trip_date, t.notes, t.created_at,
+                COUNT(b.id) AS booking_count,
+                COALESCE(SUM(b.no_of_persons), 0) AS total_persons
+            FROM trips t
+            LEFT JOIN bookings b ON b.trip_id = t.id
+            WHERE t.id = $1
+            GROUP BY t.id
+        `, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Trip not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error('Error fetching trip:', err);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+// POST create trip — admin only
+app.post('/api/trips', verifyToken, requireAdmin, async (req, res) => {
+    const { trip_name, trip_date, notes } = req.body;
+
+    if (!trip_name || !trip_date) {
+        return res.status(400).json({ error: 'Trip name and date are required.' });
+    }
+
+    try {
+        const result = await pool.query(
+            'INSERT INTO trips (trip_name, trip_date, notes) VALUES ($1, $2, $3) RETURNING *',
+            [trip_name, trip_date, notes || null]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error('Error creating trip:', err);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+// PUT update trip — admin only
+app.put('/api/trips/:id', verifyToken, requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { trip_name, trip_date, notes } = req.body;
+
+    try {
+        const result = await pool.query(
+            'UPDATE trips SET trip_name = $1, trip_date = $2, notes = $3 WHERE id = $4 RETURNING *',
+            [trip_name, trip_date, notes || null, id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Trip not found' });
+        }
+
+        res.json({ message: 'Trip updated successfully', trip: result.rows[0] });
+    } catch (err) {
+        console.error('Error updating trip:', err);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+// DELETE trip — admin only
+app.delete('/api/trips/:id', verifyToken, requireAdmin, async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const result = await pool.query('DELETE FROM trips WHERE id = $1 RETURNING *', [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Trip not found' });
+        }
+
+        res.json({ message: 'Trip deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting trip:', err);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+// ==========================================
 // BOOKING ROUTES
 // ==========================================
+
+// GET bookings — optionally filtered by tripId
 app.get('/api/bookings', verifyToken, async (req, res) => {
+    const { tripId } = req.query;
     try {
-        const allBookings = await pool.query('SELECT * FROM bookings ORDER BY created_at DESC');
-        res.json(allBookings.rows);
+        let query, params;
+        if (tripId) {
+            query = `
+                SELECT b.*, t.trip_name, t.trip_date
+                FROM bookings b
+                LEFT JOIN trips t ON t.id = b.trip_id
+                WHERE b.trip_id = $1
+                ORDER BY b.created_at DESC
+            `;
+            params = [tripId];
+        } else {
+            query = `
+                SELECT b.*, t.trip_name, t.trip_date
+                FROM bookings b
+                LEFT JOIN trips t ON t.id = b.trip_id
+                ORDER BY b.created_at DESC
+            `;
+            params = [];
+        }
+        const result = await pool.query(query, params);
+        res.json(result.rows);
     } catch (err) {
-        console.error(err.message);
+        console.error('Error fetching bookings:', err);
         res.status(500).json({ error: 'Server Error' });
     }
 });
 
+// POST create booking — employee or admin
 app.post('/api/bookings', verifyToken, async (req, res) => {
+    const { client_name, mobile_number, trip_id, no_of_persons, notes } = req.body;
+    const createdBy = req.user ? req.user.username : 'Unknown';
+
+    if (!client_name || !mobile_number || !trip_id || !no_of_persons) {
+        return res.status(400).json({ error: 'Client name, mobile number, trip, and number of persons are required.' });
+    }
+
+    if (parseInt(no_of_persons) < 1) {
+        return res.status(400).json({ error: 'Number of persons must be at least 1.' });
+    }
+
+    // Check for duplicate: same mobile number + same trip
     try {
-        const { client_name, mobile_number, trip_name, notes } = req.body;
-        const createdBy = req.user ? req.user.username : 'Unknown';
+        const dupCheck = await pool.query(
+            'SELECT id FROM bookings WHERE mobile_number = $1 AND trip_id = $2',
+            [mobile_number, trip_id]
+        );
+        if (dupCheck.rows.length > 0) {
+            return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
+        }
 
-        const query = `
-            INSERT INTO bookings (client_name, mobile_number, trip_name, notes, created_by) 
-            VALUES ($1, $2, $3, $4, $5) RETURNING *;
-        `;
-        const values = [client_name, mobile_number, trip_name, notes, createdBy];
+        const result = await pool.query(
+            'INSERT INTO bookings (client_name, mobile_number, trip_id, no_of_persons, notes, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [client_name, mobile_number, trip_id, no_of_persons, notes || null, createdBy]
+        );
 
-        const newBooking = await pool.query(query, values);
+        // Fetch joined data for response
+        const joined = await pool.query(
+            'SELECT b.*, t.trip_name, t.trip_date FROM bookings b LEFT JOIN trips t ON t.id = b.trip_id WHERE b.id = $1',
+            [result.rows[0].id]
+        );
 
-        res.json(newBooking.rows[0]);
+        res.status(201).json(joined.rows[0]);
     } catch (err) {
-        console.error(err.message);
+        console.error('Error creating booking:', err);
+        if (err.code === '23505') {
+            return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
+        }
         res.status(500).json({ error: 'Server Error' });
     }
 });
 
+// PUT update booking — employee or admin
 app.put('/api/bookings/:id', verifyToken, async (req, res) => {
     const { id } = req.params;
-    const { client_name, mobile_number, trip_name, notes } = req.body;
+    const { client_name, mobile_number, trip_id, no_of_persons, notes } = req.body;
 
     try {
-        const query = `
-            UPDATE bookings 
-            SET client_name = $1, mobile_number = $2, trip_name = $3, notes = $4 
-            WHERE id = $5 RETURNING *;
-        `;
-        const values = [client_name, mobile_number, trip_name, notes, id];
-        const result = await pool.query(query, values);
+        // Check for duplicate excluding current booking
+        const dupCheck = await pool.query(
+            'SELECT id FROM bookings WHERE mobile_number = $1 AND trip_id = $2 AND id != $3',
+            [mobile_number, trip_id, id]
+        );
+        if (dupCheck.rows.length > 0) {
+            return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
+        }
+
+        const result = await pool.query(
+            `UPDATE bookings
+             SET client_name = $1, mobile_number = $2, trip_id = $3, no_of_persons = $4, notes = $5
+             WHERE id = $6 RETURNING *`,
+            [client_name, mobile_number, trip_id, no_of_persons, notes || null, id]
+        );
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Booking not found' });
         }
 
-        res.json({ message: 'Booking updated successfully', booking: result.rows[0] });
+        const joined = await pool.query(
+            'SELECT b.*, t.trip_name, t.trip_date FROM bookings b LEFT JOIN trips t ON t.id = b.trip_id WHERE b.id = $1',
+            [result.rows[0].id]
+        );
+
+        res.json({ message: 'Booking updated successfully', booking: joined.rows[0] });
     } catch (err) {
         console.error('Error updating booking:', err);
+        if (err.code === '23505') {
+            return res.status(409).json({ error: 'This mobile number has already been registered for this trip.' });
+        }
         res.status(500).json({ error: 'Server error updating booking' });
     }
 });
 
-app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
+// DELETE booking — admin only
+app.delete('/api/bookings/:id', verifyToken, requireAdmin, async (req, res) => {
     const { id } = req.params;
 
     try {
@@ -283,7 +538,7 @@ app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// 404 & ERROR HANDLING (Guarantees JSON output)
+// 404 & ERROR HANDLING
 // ==========================================
 app.use((req, res) => {
     res.status(404).json({ error: `Cannot ${req.method} ${req.url}` });

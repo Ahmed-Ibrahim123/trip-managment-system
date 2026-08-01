@@ -1,19 +1,14 @@
 import React from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
-export default function Navbar() {
-    const navigate = useNavigate();
+export default function Navbar({ userRole, username, onLogout }) {
     const location = useLocation();
-    const token = localStorage.getItem('token');
-
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        navigate('/login');
-    };
 
     if (location.pathname === '/login' || location.pathname === '/register') {
         return null;
     }
+
+    const isAdmin = userRole === 'admin';
 
     return (
         <nav className="navbar">
@@ -23,32 +18,33 @@ export default function Navbar() {
             <ul className="nav-links">
                 <li>
                     <Link to="/" className={location.pathname === '/' ? 'active' : ''}>
-                        Dashboard
-                    </Link>
-                </li>
-                <li>
-                    <Link to="/employees" className={location.pathname === '/employees' ? 'active' : ''}>
-                        Staff Management
+                        Trips
                     </Link>
                 </li>
                 <li>
                     <Link to="/add-booking" className={location.pathname === '/add-booking' ? 'active' : ''}>
-                        Add New Booking
+                        Add Booking
                     </Link>
                 </li>
-                {token ? (
+                {isAdmin && (
                     <li>
-                        <button onClick={handleLogout} className="nav-logout-btn">
-                            Logout
-                        </button>
-                    </li>
-                ) : (
-                    <li>
-                        <Link to="/login" className={location.pathname === '/login' ? 'active' : ''}>
-                            Login
+                        <Link to="/employees" className={location.pathname === '/employees' ? 'active' : ''}>
+                            Staff Management
                         </Link>
                     </li>
                 )}
+                {username && (
+                    <li>
+                        <span className={`nav-role-badge ${isAdmin ? 'nav-role-admin' : 'nav-role-employee'}`}>
+                            {isAdmin ? '👑' : '👤'} {username}
+                        </span>
+                    </li>
+                )}
+                <li>
+                    <button onClick={onLogout} className="nav-logout-btn">
+                        Logout
+                    </button>
+                </li>
             </ul>
         </nav>
     );

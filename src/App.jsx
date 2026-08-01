@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import './App.css';
 import Form from './Form';
-import Dashboard from './Dashboard';
+import TripsPage from './Dashboard';
+import TripDashboard from './TripDashboard';
 import Navbar from './NavBar';
 import Login from './Login';
 import Register from './Register';
@@ -11,215 +12,223 @@ import Employees from './Employees';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+// Decode JWT payload without a library
+function decodeToken(token) {
+    try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        return JSON.parse(atob(base64));
+    } catch {
+        return null;
+    }
+}
+
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return !!localStorage.getItem('token');
-  });
-
-  const [input, setInput] = useState({ clientName: "", mobileNumber: "", tripName: "", notes: "" });
-  const [data, setData] = useState([]);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    async function fetchBookings() {
-      try {
+    const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
+    const [userRole, setUserRole] = useState(() => {
         const token = localStorage.getItem('token');
-        const response = await fetch(`${API_URL}/api/bookings`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        const contentType = response.headers.get("content-type");
-        let dbRecords;
-        if (contentType && contentType.includes("application/json")) {
-          dbRecords = await response.json();
-        } else {
-          throw new Error(await response.text());
-        }
-
-        if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            localStorage.removeItem('token');
-            setIsAuthenticated(false);
-            navigate('/login');
-            return;
-          }
-          throw new Error('Failed to fetch bookings');
-        }
-
-        const formattedRecords = dbRecords.map(record => ({
-          id: record.id,
-          clientName: record.client_name,
-          mobileNumber: record.mobile_number,
-          tripName: record.trip_name,
-          notes: record.notes,
-          createdAt: record.created_at,
-          createdBy: record.created_by
-        }));
-
-        setData(formattedRecords);
-      } catch (error) {
-        console.error("Failed to fetch bookings:", error);
-      }
-    }
-
-    if (isAuthenticated) {
-      fetchBookings();
-    }
-  }, [isAuthenticated, navigate]);
-
-  function handleChange(e) {
-    const value = e.target.value;
-    setInput({
-      ...input,
-      [e.target.name]: value,
+        if (!token) return null;
+        const decoded = decodeToken(token);
+        return decoded?.role || null;
     });
-  }
+    const [username, setUsername] = useState(() => {
+        const token = localStorage.getItem('token');
+        if (!token) return null;
+        const decoded = decodeToken(token);
+        return decoded?.username || null;
+    });
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    const token = localStorage.getItem('token');
+    const [trips, setTrips] = useState([]);
+    const navigate = useNavigate();
 
-    try {
-      const response = await fetch(`${API_URL}/api/bookings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          client_name: input.clientName,
-          mobile_number: input.mobileNumber,
-          trip_name: input.tripName,
-          notes: input.notes
-        }),
-      });
+    // ---- Auth helpers ----
+    const handleAuthSuccess = useCallback((token) => {
+        const decoded = decodeToken(token);
+        localStorage.setItem('token', token);
+        setIsAuthenticated(true);
+        setUserRole(decoded?.role || 'employee');
+        setUsername(decoded?.username || null);
+    }, []);
 
-      const contentType = response.headers.get("content-type");
-      let resData;
-      if (contentType && contentType.includes("application/json")) {
-        resData = await response.json();
-      } else {
-        resData = await response.text();
-      }
+    const handleLogout = useCallback(() => {
+        localStorage.removeItem('token');
+        setIsAuthenticated(false);
+        setUserRole(null);
+        setUsername(null);
+        setTrips([]);
+        navigate('/login');
+    }, [navigate]);
 
-      if (response.ok) {
-        const formattedNewRecord = {
-          id: resData.id,
-          clientName: resData.client_name,
-          mobileNumber: resData.mobile_number,
-          tripName: resData.trip_name,
-          notes: resData.notes,
-          createdAt: resData.created_at,
-          createdBy: resData.created_by
-        };
-
-        setData(prev => [formattedNewRecord, ...prev]);
-        setInput({ clientName: "", mobileNumber: "", tripName: "", notes: "" });
-        navigate('/');
-      } else {
-        console.error("Server refused the booking:", resData);
-        if (response.status === 401 || response.status === 403) {
-          localStorage.removeItem('token');
-          setIsAuthenticated(false);
-          navigate('/login');
+    // ---- Trips API ----
+    const fetchTrips = useCallback(async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_URL}/api/trips`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.status === 401 || res.status === 403) {
+                handleLogout();
+                return;
+            }
+            if (!res.ok) throw new Error('Failed to fetch trips');
+            const data = await res.json();
+            setTrips(data);
+        } catch (err) {
+            console.error('Error fetching trips:', err);
         }
-      }
-    } catch (error) {
-      console.error("Network error when saving booking:", error);
-    }
-  }
+    }, [handleLogout]);
 
-  async function handleDelete(id) {
-    const token = localStorage.getItem('token');
-    try {
-      const response = await fetch(`${API_URL}/api/bookings/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
+    useEffect(() => {
+        if (isAuthenticated) fetchTrips();
+    }, [isAuthenticated, fetchTrips]);
+
+    const handleAddTrip = async (tripData) => {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`${API_URL}/api/trips`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify(tripData)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to create trip');
+            setTrips(prev => [data, ...prev]);
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
         }
-      });
+    };
 
-      if (response.ok) {
-        setData(prev => prev.filter(record => record.id !== id));
-      } else {
-        console.error("Failed to delete booking");
-      }
-    } catch (error) {
-      console.error("Error deleting booking:", error);
-    }
-  }
+    const handleDeleteTrip = async (id) => {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`${API_URL}/api/trips/${id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to delete trip');
+            }
+            setTrips(prev => prev.filter(t => t.id !== id));
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    };
 
-  async function handleUpdate(id, updatedData) {
-    const token = localStorage.getItem('token');
-    try {
-      const response = await fetch(`${API_URL}/api/bookings/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          client_name: updatedData.clientName,
-          mobile_number: updatedData.mobileNumber,
-          trip_name: updatedData.tripName,
-          notes: updatedData.notes
-        })
-      });
+    // ---- Bookings API ----
+    const handleAddBooking = async (bookingData) => {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`${API_URL}/api/bookings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify(bookingData)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to create booking');
+            // Refresh trip stats
+            fetchTrips();
+            return { success: true, booking: data };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    };
 
-      const contentType = response.headers.get("content-type");
-      let result;
-      if (contentType && contentType.includes("application/json")) {
-        result = await response.json();
-      } else {
-        result = await response.text();
-      }
+    const handleUpdateBooking = async (id, updatedData) => {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`${API_URL}/api/bookings/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify(updatedData)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to update booking');
+            fetchTrips();
+            return { success: true, booking: data.booking };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    };
 
-      if (response.ok) {
-        const updated = result.booking || result;
+    const handleDeleteBooking = async (id) => {
+        const token = localStorage.getItem('token');
+        try {
+            const res = await fetch(`${API_URL}/api/bookings/${id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to delete booking');
+            }
+            fetchTrips();
+            return { success: true };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    };
 
-        setData(prev => prev.map(record => record.id === id ? {
-          ...record,
-          clientName: updated.client_name,
-          mobileNumber: updated.mobile_number,
-          tripName: updated.trip_name,
-          notes: updated.notes
-        } : record));
-      } else {
-        console.error("Failed to update booking:", result);
-      }
-    } catch (error) {
-      console.error("Error updating booking:", error);
-    }
-  }
+    return (
+        <>
+            {isAuthenticated && (
+                <Navbar
+                    userRole={userRole}
+                    username={username}
+                    onLogout={handleLogout}
+                />
+            )}
 
-  return (
-    <>
-      {isAuthenticated && <Navbar setIsAuthenticated={setIsAuthenticated} />}
+            <Routes>
+                <Route path="/login" element={<Login onAuthSuccess={handleAuthSuccess} />} />
+                <Route path="/register" element={<Register />} />
 
-      <Routes>
-        <Route path="/login" element={<Login setIsAuthenticated={setIsAuthenticated} />} />
-        <Route path="/register" element={<Register />} />
+                {/* Trips Overview Page (was Dashboard) */}
+                <Route path="/" element={
+                    <ProtectedRoute isAuthenticated={isAuthenticated}>
+                        <TripsPage
+                            trips={trips}
+                            userRole={userRole}
+                            onAddTrip={handleAddTrip}
+                            onDeleteTrip={handleDeleteTrip}
+                        />
+                    </ProtectedRoute>
+                } />
 
-        <Route path="/" element={
-          <ProtectedRoute isAuthenticated={isAuthenticated}>
-            <Dashboard records={data} onDelete={handleDelete} onUpdate={handleUpdate} />
-          </ProtectedRoute>
-        } />
+                {/* Trip-Specific Dashboard */}
+                <Route path="/trips/:tripId" element={
+                    <ProtectedRoute isAuthenticated={isAuthenticated}>
+                        <TripDashboard
+                            trips={trips}
+                            userRole={userRole}
+                            onUpdateBooking={handleUpdateBooking}
+                            onDeleteBooking={handleDeleteBooking}
+                        />
+                    </ProtectedRoute>
+                } />
 
-        <Route path="/add-booking" element={
-          <ProtectedRoute isAuthenticated={isAuthenticated}>
-            <Form data={input} onChange={handleChange} onSubmit={handleSubmit} />
-          </ProtectedRoute>
-        } />
+                {/* Add Booking Form */}
+                <Route path="/add-booking" element={
+                    <ProtectedRoute isAuthenticated={isAuthenticated}>
+                        <Form
+                            trips={trips}
+                            userRole={userRole}
+                            onAddBooking={handleAddBooking}
+                        />
+                    </ProtectedRoute>
+                } />
 
-        <Route path="/employees" element={
-          <ProtectedRoute isAuthenticated={isAuthenticated}>
-            <Employees />
-          </ProtectedRoute>
-        } />
+                {/* Staff Management — admin only gated in component */}
+                <Route path="/employees" element={
+                    <ProtectedRoute isAuthenticated={isAuthenticated}>
+                        <Employees userRole={userRole} />
+                    </ProtectedRoute>
+                } />
 
-        <Route path="*" element={isAuthenticated ? <h2>Page Not Found</h2> : <Navigate to="/login" replace />} />
-      </Routes>
-    </>
-  );
+                <Route path="*" element={isAuthenticated ? <h2 style={{ padding: '40px', textAlign: 'center' }}>Page Not Found</h2> : <Navigate to="/login" replace />} />
+            </Routes>
+        </>
+    );
 }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom'; // Removed unused useNavigate
+import { Link } from 'react-router-dom';
 
-export default function Login() {
+export default function Login({ onAuthSuccess }) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -24,10 +24,10 @@ export default function Login() {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Invalid username or password');
 
-            // 1. Store the token
-            localStorage.setItem('token', data.token);
+            // Store token and update app state via callback
+            onAuthSuccess(data.token);
 
-            // 2. Force a full navigation so App.jsx re-reads the token state
+            // Navigate home
             window.location.href = '/';
 
         } catch (err) {
