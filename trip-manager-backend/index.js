@@ -32,104 +32,119 @@ const pool = new Pool(
 // DATABASE INITIALIZATION & MIGRATION
 // ==========================================
 const initDb = async () => {
-    const client = await pool.connect();
+    // Run each migration step independently so one failure doesn't block the others
+    const run = async (label, sql, params = []) => {
+        try {
+            await pool.query(sql, params);
+        } catch (err) {
+            console.warn(`[initDb] Skipped "${label}": ${err.message}`);
+        }
+    };
+
+    // 1. Users table
+    await run('create users', `
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            role VARCHAR(20) NOT NULL DEFAULT 'employee',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+    await run('add users.role', `ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'employee';`);
+    await run('set OlaSoliman admin', `UPDATE users SET role = 'admin' WHERE username = 'OlaSoliman';`);
+
+    // 2. Trips table
+    await run('create trips', `
+        CREATE TABLE IF NOT EXISTS trips (
+            id SERIAL PRIMARY KEY,
+            trip_name VARCHAR(255) NOT NULL,
+            trip_date DATE NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+
+    // 3. Bookings table (new schema)
+    await run('create bookings', `
+        CREATE TABLE IF NOT EXISTS bookings (
+            id SERIAL PRIMARY KEY,
+            client_name VARCHAR(255) NOT NULL,
+            mobile_number VARCHAR(50) NOT NULL,
+            trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+            no_of_persons INTEGER NOT NULL DEFAULT 1,
+            notes TEXT,
+            created_by VARCHAR(255),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+    await run('add bookings.trip_id', `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL;`);
+    await run('add bookings.no_of_persons', `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_of_persons INTEGER NOT NULL DEFAULT 1;`);
+
+    // 4. Migrate old trip_name text data into dedicated legacy trips
+    //    Create one legacy trip PER unique old trip_name to avoid duplicate-mobile violations
     try {
-        await client.query('BEGIN');
-
-        // --- Users table: add role column if missing ---
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(255) UNIQUE NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                role VARCHAR(20) NOT NULL DEFAULT 'employee',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        const legacyColCheck = await pool.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_name='bookings' AND column_name='trip_name';`
+        );
+        if (legacyColCheck.rows.length > 0) {
+            const orphaned = await pool.query(
+                `SELECT DISTINCT COALESCE(NULLIF(TRIM(trip_name), ''), 'Legacy Bookings') AS tname
+                 FROM bookings WHERE trip_id IS NULL;`
             );
-        `);
-        // Add role column to existing tables if it doesn't exist
-        await client.query(`
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'employee';
-        `);
-        // Ensure OlaSoliman is always admin
-        await client.query(`
-            UPDATE users SET role = 'admin' WHERE username = 'OlaSoliman';
-        `);
-
-        // --- Trips table ---
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS trips (
-                id SERIAL PRIMARY KEY,
-                trip_name VARCHAR(255) NOT NULL,
-                trip_date DATE NOT NULL,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-
-        // --- Bookings table: full migration ---
-        // Create bookings table if it doesn't exist (new schema)
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS bookings (
-                id SERIAL PRIMARY KEY,
-                client_name VARCHAR(255) NOT NULL,
-                mobile_number VARCHAR(50) NOT NULL,
-                trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
-                no_of_persons INTEGER NOT NULL DEFAULT 1,
-                notes TEXT,
-                created_by VARCHAR(255),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-
-        // Add new columns to bookings if upgrading from old schema
-        await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL;`);
-        await client.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_of_persons INTEGER NOT NULL DEFAULT 1;`);
-
-        // Migrate old trip_name text data: create a "Legacy" trip and assign orphaned bookings
-        const legacyCheck = await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name='bookings' AND column_name='trip_name';`);
-        if (legacyCheck.rows.length > 0) {
-            // Check if there are any bookings with trip_name but no trip_id
-            const orphanedBookings = await client.query(`SELECT COUNT(*) FROM bookings WHERE trip_id IS NULL AND trip_name IS NOT NULL AND trip_name != '';`);
-            if (parseInt(orphanedBookings.rows[0].count) > 0) {
-                // Create legacy trip if it doesn't exist
-                const legacyTrip = await client.query(`
-                    INSERT INTO trips (trip_name, trip_date, notes)
-                    VALUES ('Legacy Bookings', CURRENT_DATE, 'Auto-created for migrated bookings')
-                    ON CONFLICT DO NOTHING
-                    RETURNING id;
-                `);
-                let legacyTripId = legacyTrip.rows[0]?.id;
-                if (!legacyTripId) {
-                    const existing = await client.query(`SELECT id FROM trips WHERE trip_name = 'Legacy Bookings' LIMIT 1;`);
-                    legacyTripId = existing.rows[0]?.id;
+            for (const row of orphaned.rows) {
+                const tname = row.tname;
+                // Find or create a trip for this old trip_name
+                let legacyTripId;
+                const existing = await pool.query(`SELECT id FROM trips WHERE trip_name = $1 LIMIT 1;`, [tname]);
+                if (existing.rows.length > 0) {
+                    legacyTripId = existing.rows[0].id;
+                } else {
+                    const inserted = await pool.query(
+                        `INSERT INTO trips (trip_name, trip_date, notes) VALUES ($1, CURRENT_DATE, 'Migrated from legacy data') RETURNING id;`,
+                        [tname]
+                    );
+                    legacyTripId = inserted.rows[0].id;
                 }
-                if (legacyTripId) {
-                    await client.query(`UPDATE bookings SET trip_id = $1 WHERE trip_id IS NULL;`, [legacyTripId]);
-                }
+                // Assign orphaned bookings for this trip_name
+                await pool.query(
+                    `UPDATE bookings SET trip_id = $1 WHERE trip_id IS NULL AND COALESCE(NULLIF(TRIM(trip_name), ''), 'Legacy Bookings') = $2;`,
+                    [legacyTripId, tname]
+                );
             }
         }
-
-        // Add unique constraint on (mobile_number, trip_id) if not already present
-        await client.query(`
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint WHERE conname = 'bookings_mobile_trip_unique'
-                ) THEN
-                    ALTER TABLE bookings ADD CONSTRAINT bookings_mobile_trip_unique UNIQUE (mobile_number, trip_id);
-                END IF;
-            END$$;
-        `);
-
-        await client.query('COMMIT');
-        console.log('Database tables verified/migrated successfully.');
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Error initializing database tables:', err.message);
-    } finally {
-        client.release();
+        console.warn('[initDb] Legacy migration skipped:', err.message);
     }
+
+    // 5. Add unique constraint only if no duplicate (mobile_number, trip_id) pairs exist
+    try {
+        const constraintExists = await pool.query(
+            `SELECT 1 FROM pg_constraint WHERE conname = 'bookings_mobile_trip_unique';`
+        );
+        if (constraintExists.rows.length === 0) {
+            // Check for duplicates before adding constraint
+            const dupes = await pool.query(
+                `SELECT mobile_number, trip_id, COUNT(*) FROM bookings
+                 WHERE trip_id IS NOT NULL
+                 GROUP BY mobile_number, trip_id HAVING COUNT(*) > 1;`
+            );
+            if (dupes.rows.length === 0) {
+                await pool.query(
+                    `ALTER TABLE bookings ADD CONSTRAINT bookings_mobile_trip_unique UNIQUE (mobile_number, trip_id);`
+                );
+                console.log('[initDb] Unique constraint added.');
+            } else {
+                console.warn(`[initDb] Skipped unique constraint — ${dupes.rows.length} duplicate (mobile, trip) pair(s) exist. Resolve duplicates manually.`);
+            }
+        }
+    } catch (err) {
+        console.warn('[initDb] Unique constraint step skipped:', err.message);
+    }
+
+    console.log('Database initialization complete.');
 };
+
 
 initDb();
 
