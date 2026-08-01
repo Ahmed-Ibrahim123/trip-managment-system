@@ -10,10 +10,9 @@ const PORT = process.env.PORT || 5000;
 
 // 1. Middleware
 app.use(cors());
-app.use(express.json()); // Crucial: Allows Express to read JSON bodies from React
+app.use(express.json()); // Allows Express to read JSON bodies from React
 
 // 2. PostgreSQL Connection Pool
-// 2. PostgreSQL Connection Pool (Supports Neon Cloud & Local fallback)
 const pool = new Pool(
     process.env.DATABASE_URL
         ? {
@@ -41,6 +40,13 @@ pool.query('SELECT NOW()', (err, res) => {
 });
 
 // ==========================================
+// HEALTH CHECK ROUTE (Prevents HTML 404 on Root)
+// ==========================================
+app.get('/', (req, res) => {
+    res.json({ status: 'ok', message: 'TripManager API is live' });
+});
+
+// ==========================================
 // AUTHENTICATION MIDDLEWARE
 // ==========================================
 const verifyToken = (req, res, next) => {
@@ -65,7 +71,6 @@ const verifyToken = (req, res, next) => {
 // ==========================================
 app.post('/api/register', async (req, res) => {
     const { username, password, adminSecret } = req.body;
-
     const expectedSecret = process.env.ADMIN_SECRET_PASSWORD || 'admin123';
 
     if (adminSecret !== expectedSecret) {
@@ -89,49 +94,6 @@ app.post('/api/register', async (req, res) => {
         res.status(201).json({ message: "User registered successfully", user: newUserResult.rows[0] });
     } catch (err) {
         console.error("Register error:", err.message);
-        res.status(500).json({ error: 'Server Error' });
-    }
-});
-
-// ==========================================
-// EMPLOYEE ROUTES
-// ==========================================
-
-app.get('/api/employees', verifyToken, async (req, res) => {
-    try {
-        const employees = await pool.query('SELECT id, username, created_at FROM users ORDER BY created_at DESC');
-        res.json(employees.rows);
-    } catch (err) {
-        console.error('Error fetching employees:', err);
-        res.status(500).json({ error: 'Server Error' });
-    }
-});
-
-app.delete('/api/employees/:id', verifyToken, async (req, res) => {
-    const { id } = req.params;
-
-    try {
-        const userCheck = await pool.query('SELECT username FROM users WHERE id = $1', [id]);
-
-        if (userCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Employee not found' });
-        }
-
-        const targetUser = userCheck.rows[0];
-
-        if (targetUser.username === 'OlaSoliman') {
-            return res.status(403).json({ error: 'Cannot delete the primary admin account.' });
-        }
-
-        if (req.user && req.user.id === parseInt(id)) {
-            return res.status(403).json({ error: 'You cannot delete your own active session.' });
-        }
-
-        const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id, username;', [id]);
-
-        res.json({ message: 'Employee deleted successfully', employee: result.rows[0] });
-    } catch (err) {
-        console.error('Error deleting employee:', err);
         res.status(500).json({ error: 'Server Error' });
     }
 });
@@ -171,7 +133,49 @@ app.post('/api/login', async (req, res) => {
         res.json({ token });
 
     } catch (err) {
-        console.log("Login server error:", err.message);
+        console.error("Login server error:", err.message);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+// ==========================================
+// EMPLOYEE ROUTES
+// ==========================================
+app.get('/api/employees', verifyToken, async (req, res) => {
+    try {
+        const employees = await pool.query('SELECT id, username, created_at FROM users ORDER BY created_at DESC');
+        res.json(employees.rows);
+    } catch (err) {
+        console.error('Error fetching employees:', err);
+        res.status(500).json({ error: 'Server Error' });
+    }
+});
+
+app.delete('/api/employees/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const userCheck = await pool.query('SELECT username FROM users WHERE id = $1', [id]);
+
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Employee not found' });
+        }
+
+        const targetUser = userCheck.rows[0];
+
+        if (targetUser.username === 'OlaSoliman') {
+            return res.status(403).json({ error: 'Cannot delete the primary admin account.' });
+        }
+
+        if (req.user && req.user.id === parseInt(id)) {
+            return res.status(403).json({ error: 'You cannot delete your own active session.' });
+        }
+
+        const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id, username;', [id]);
+
+        res.json({ message: 'Employee deleted successfully', employee: result.rows[0] });
+    } catch (err) {
+        console.error('Error deleting employee:', err);
         res.status(500).json({ error: 'Server Error' });
     }
 });
@@ -179,7 +183,6 @@ app.post('/api/login', async (req, res) => {
 // ==========================================
 // BOOKING ROUTES
 // ==========================================
-
 app.get('/api/bookings', verifyToken, async (req, res) => {
     try {
         const allBookings = await pool.query('SELECT * FROM bookings ORDER BY created_at DESC');
@@ -249,6 +252,18 @@ app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
         console.error('Error deleting booking:', err);
         res.status(500).json({ error: 'Server error deleting booking' });
     }
+});
+
+// ==========================================
+// 404 & ERROR HANDLING (Guarantees JSON output)
+// ==========================================
+app.use((req, res) => {
+    res.status(404).json({ error: `Cannot ${req.method} ${req.url}` });
+});
+
+app.use((err, req, res, next) => {
+    console.error('Unhandled Server Error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
 });
 
 // 3. Start Server
