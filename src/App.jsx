@@ -9,6 +9,8 @@ import Register from './Register';
 import ProtectedRoute from './ProtectedRoute';
 import Employees from './Employees';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return !!localStorage.getItem('token');
@@ -22,7 +24,7 @@ export default function App() {
     async function fetchBookings() {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:5000/api/bookings', {
+        const response = await fetch(`${API_URL}/api/bookings`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
 
@@ -78,7 +80,7 @@ export default function App() {
     const token = localStorage.getItem('token');
 
     try {
-      const response = await fetch('http://localhost:5000/api/bookings', {
+      const response = await fetch(`${API_URL}/api/bookings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -130,7 +132,7 @@ export default function App() {
   async function handleDelete(id) {
     const token = localStorage.getItem('token');
     try {
-      const response = await fetch(`http://localhost:5000/api/bookings/${id}`, {
+      const response = await fetch(`${API_URL}/api/bookings/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -150,7 +152,7 @@ export default function App() {
   async function handleUpdate(id, updatedData) {
     const token = localStorage.getItem('token');
     try {
-      const response = await fetch(`http://localhost:5000/api/bookings/${id}`, {
+      const response = await fetch(`${API_URL}/api/bookings/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

@@ -6,11 +6,11 @@ export default function Employees() {
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
     const navigate = useNavigate();
-
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
     const fetchEmployees = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch('http://localhost:5000/api/employees', {
+            const response = await fetch(`${API_URL}/api/employees`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
