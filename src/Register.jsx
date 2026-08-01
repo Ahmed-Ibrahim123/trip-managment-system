@@ -49,7 +49,7 @@ export default function Register() {
 
     return (
         <div className="app-container">
-            <div className="register-container" style={{ maxWidth: '450px', margin: '0 auto' }}>
+            <div className="register-container">
                 <h2>Register New Employee</h2>
                 <p className="subtitle">Create a new staff credential for the trip management portal.</p>
 

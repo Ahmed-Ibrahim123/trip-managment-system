@@ -539,3 +539,114 @@ tr:hover td {
 .auth-footer-link a:hover {
     text-decoration: underline;
 }
+
+/* ==========================================
+   RESPONSIVE DESIGN & MEDIA QUERIES
+   ========================================== */
+
+/* Tablet & Smaller Screens (≤ 768px) */
+@media (max-width: 768px) {
+
+    /* Navbar adjust: Allows wrapping & horizontal scrolling links if needed */
+    .navbar {
+        padding: 12px 20px;
+        height: auto;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .nav-links {
+        order: 3;
+        width: 100%;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-links a {
+        padding: 6px 10px;
+        font-size: 0.875rem;
+        white-space: nowrap;
+    }
+
+    /* Outer Container Padding */
+    .app-container {
+        margin: 20px auto;
+        padding: 0 16px;
+    }
+
+    /* General Card & Auth Padding */
+    .card,
+    .employees-container,
+    .login-container,
+    .register-container,
+    .booking-form-container,
+    .auth-card {
+        padding: 24px 20px;
+    }
+
+    /* Dashboard Grid Adjustment */
+    .dashboard-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+    }
+
+    /* Table Padding Adjustments */
+    th,
+    td {
+        padding: 12px 14px;
+    }
+}
+
+/* Mobile Devices (≤ 480px) */
+@media (max-width: 480px) {
+    h2 {
+        font-size: 1.4rem;
+    }
+
+    .subtitle {
+        margin-bottom: 20px;
+    }
+
+    /* Compact Auth Forms & Cards */
+    .auth-wrapper {
+        padding: 10px;
+        min-height: 100vh;
+    }
+
+    .card,
+    .employees-container,
+    .login-container,
+    .register-container,
+    .booking-form-container,
+    .auth-card {
+        padding: 20px 16px;
+        border-radius: var(--radius-md);
+    }
+
+    /* Dashboard Stats Stack */
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .stat-card {
+        padding: 20px;
+    }
+
+    .stat-card .stat-value {
+        font-size: 1.6rem;
+    }
+
+    /* Mobile Tables & Actions */
+    th,
+    td {
+        padding: 10px 12px;
+        font-size: 0.85rem;
+    }
+
+    .delete-btn {
+        padding: 4px 10px;
+        font-size: 0.8rem;
+    }
+}
