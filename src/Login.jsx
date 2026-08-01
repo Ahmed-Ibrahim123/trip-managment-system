@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom'; // Removed unused useNavigate
 
 export default function Login() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const navigate = useNavigate();
+
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
     const handleLogin = async (e) => {
@@ -24,8 +24,12 @@ export default function Login() {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Invalid username or password');
 
+            // 1. Store the token
             localStorage.setItem('token', data.token);
-            navigate('/');
+
+            // 2. Force a full navigation so App.jsx re-reads the token state
+            window.location.href = '/';
+
         } catch (err) {
             setError(err.message);
         } finally {
