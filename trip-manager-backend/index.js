@@ -29,7 +29,35 @@ const pool = new Pool(
             port: process.env.DB_PORT,
         }
 );
+// Automatically create required tables on server startup if they don't exist
+const initDb = async () => {
+    try {
+        await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
 
+      CREATE TABLE IF NOT EXISTS bookings (
+        id SERIAL PRIMARY KEY,
+        client_name VARCHAR(255) NOT NULL,
+        mobile_number VARCHAR(50) NOT NULL,
+        trip_name VARCHAR(255) NOT NULL,
+        notes TEXT,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+        console.log('Database tables verified/created successfully.');
+    } catch (err) {
+        console.error('Error initializing database tables:', err.message);
+    }
+};
+
+// Run table initialization
+initDb();
 // Test database connection on startup
 pool.query('SELECT NOW()', (err, res) => {
     if (err) {
