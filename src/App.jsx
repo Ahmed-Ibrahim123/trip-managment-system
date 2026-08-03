@@ -9,6 +9,7 @@ import Login from './Login';
 import Register from './Register';
 import ProtectedRoute from './ProtectedRoute';
 import Employees from './Employees';
+import { useSettings } from './contexts/SettingsContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -24,6 +25,7 @@ function decodeToken(token) {
 }
 
 export default function App() {
+    const { language } = useSettings();
     const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
     const [userRole, setUserRole] = useState(() => {
         const token = localStorage.getItem('token');
@@ -80,7 +82,7 @@ export default function App() {
 
     useEffect(() => {
         if (isAuthenticated) fetchTrips();
-    }, [isAuthenticated, fetchTrips]);
+    }, [isAuthenticated, fetchTrips, language]);
 
     const handleAddTrip = async (tripData) => {
         const token = localStorage.getItem('token');
@@ -227,7 +229,7 @@ export default function App() {
                     </ProtectedRoute>
                 } />
 
-                <Route path="*" element={isAuthenticated ? <h2 style={{ padding: '40px', textAlign: 'center' }}>Page Not Found</h2> : <Navigate to="/login" replace />} />
+                <Route path="*" element={isAuthenticated ? <h2 style={{ padding: '40px', textAlign: 'center' }}>{language === 'ar' ? 'الصفحة غير موجودة' : 'Page Not Found'}</h2> : <Navigate to="/login" replace />} />
             </Routes>
         </>
     );

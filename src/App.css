@@ -24,6 +24,70 @@
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
+:root[data-theme="dark"] {
+    --bg-main: #0f172a;
+    --surface: #1e293b;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --border: #334155;
+    --primary-light: #1e1b4b;
+}
+
+:root[lang="ar"] * {
+    font-family: 'Plus Jakarta Sans', 'Cairo', 'Tajawal', sans-serif;
+}
+
+/* Settings Modal */
+.settings-dropdown {
+    position: absolute;
+    top: 60px;
+    right: 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 16px;
+    width: 250px;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+:root[lang="ar"] .settings-dropdown {
+    right: auto;
+    left: 32px;
+}
+
+.settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-section label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.settings-btn {
+    background: transparent;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color 0.2s ease;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.settings-btn:hover {
+    color: var(--primary);
+}
+
 * {
     box-sizing: border-box;
     margin: 0;

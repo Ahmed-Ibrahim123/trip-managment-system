@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useSettings } from './contexts/SettingsContext';
 
 export default function Login({ onAuthSuccess }) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const { t } = useSettings();
 
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -41,28 +43,28 @@ export default function Login({ onAuthSuccess }) {
         <div className="auth-wrapper">
             <div className="auth-card">
                 <div className="auth-header">
-                    <h2>Welcome Back</h2>
-                    <p>Sign in to your TripManager portal</p>
+                    <h2>{t('loginTitle')}</h2>
+                    <p>{t('loginSubtitle')}</p>
                 </div>
 
                 {error && <div className="alert error">{error}</div>}
 
                 <form onSubmit={handleLogin}>
                     <div className="input-wrapper">
-                        <label htmlFor="username">Username</label>
+                        <label htmlFor="username">{t('usernameLabel')}</label>
                         <input
                             type="text"
                             id="username"
-                            placeholder="Enter your username"
+                            placeholder={t('usernamePlaceholder')}
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             required
                         />
-                        <span className="input-hint">Your unique system login handle</span>
+                        <span className="input-hint">{t('usernameHint')}</span>
                     </div>
 
                     <div className="input-wrapper">
-                        <label htmlFor="password">Password</label>
+                        <label htmlFor="password">{t('passwordLabel')}</label>
                         <input
                             type="password"
                             id="password"
@@ -71,16 +73,16 @@ export default function Login({ onAuthSuccess }) {
                             onChange={(e) => setPassword(e.target.value)}
                             required
                         />
-                        <span className="input-hint">Your account secure password</span>
+                        <span className="input-hint">{t('passwordHint')}</span>
                     </div>
 
                     <button type="submit" className="auth-btn" disabled={loading}>
-                        {loading ? 'Signing in...' : 'Sign In'}
+                        {loading ? t('btnSigningIn') : t('btnSignIn')}
                     </button>
                 </form>
 
                 <div className="auth-footer-link">
-                    <p>Need to create staff credentials? <Link to="/register">Add Employee</Link></p>
+                    <p>{t('linkAddEmployee').split('?')[0]}? <Link to="/register">{t('linkAddEmployee').split('?')[1]?.trim() || 'Add Employee'}</Link></p>
                 </div>
             </div>
         </div>

@@ -1,14 +1,16 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom' // 1. Import this
+import { BrowserRouter } from 'react-router-dom'
+import { SettingsProvider } from './contexts/SettingsContext'
 import App from './App.jsx'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    {/* 2. Wrap App inside BrowserRouter */}
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <SettingsProvider>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </SettingsProvider>
   </React.StrictMode>,
 )

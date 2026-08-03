@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSettings } from './contexts/SettingsContext';
 
 export default function Form({ trips, userRole, onAddBooking }) {
     const navigate = useNavigate();
+    const { t, language } = useSettings();
     const [form, setForm] = useState({
         trip_id: '',
         client_name: '',
@@ -25,13 +27,13 @@ export default function Form({ trips, userRole, onAddBooking }) {
         setSubmitting(true);
 
         if (!form.trip_id) {
-            setError('Please select a trip.');
+            setError(language === 'ar' ? 'الرجاء تحديد رحلة.' : 'Please select a trip.');
             setSubmitting(false);
             return;
         }
 
         if (parseInt(form.no_of_persons) < 1) {
-            setError('Number of persons must be at least 1.');
+            setError(language === 'ar' ? 'يجب أن يكون عدد الأشخاص 1 على الأقل.' : 'Number of persons must be at least 1.');
             setSubmitting(false);
             return;
         }
@@ -47,11 +49,11 @@ export default function Form({ trips, userRole, onAddBooking }) {
         setSubmitting(false);
 
         if (result.success) {
-            setSuccess('Booking added successfully!');
+            setSuccess(language === 'ar' ? 'تم إضافة الحجز بنجاح!' : 'Booking added successfully!');
             setForm({ trip_id: '', client_name: '', mobile_number: '', no_of_persons: 1, notes: '' });
             setTimeout(() => navigate('/'), 1500);
         } else {
-            setError(result.error || 'Failed to add booking.');
+            setError(result.error || (language === 'ar' ? 'فشل في إضافة الحجز.' : 'Failed to add booking.'));
         }
     };
 
@@ -59,8 +61,8 @@ export default function Form({ trips, userRole, onAddBooking }) {
         <div className="app-container">
             <div className="card" style={{ maxWidth: '640px', margin: '0 auto' }}>
                 <div style={{ marginBottom: '24px' }}>
-                    <h2 style={{ marginBottom: '6px' }}>➕ Add New Booking</h2>
-                    <p className="subtitle">Fill in the client and trip details below.</p>
+                    <h2 style={{ marginBottom: '6px' }}>{t('addBookingTitle')}</h2>
+                    <p className="subtitle">{t('addBookingSubtitle')}</p>
                 </div>
 
                 {error && <div className="alert error">{error}</div>}
@@ -69,7 +71,7 @@ export default function Form({ trips, userRole, onAddBooking }) {
                 <form onSubmit={handleSubmit}>
                     {/* Trip Select */}
                     <div className="form-group">
-                        <label htmlFor="trip_id">Trip <span style={{ color: 'var(--danger)' }}>*</span></label>
+                        <label htmlFor="trip_id">{t('formTripLabel')} <span style={{ color: 'var(--danger)' }}>*</span></label>
                         <select
                             id="trip_id"
                             name="trip_id"
@@ -77,52 +79,52 @@ export default function Form({ trips, userRole, onAddBooking }) {
                             onChange={handleChange}
                             required
                         >
-                            <option value="">— Select a trip —</option>
+                            <option value="">{t('formSelectTrip')}</option>
                             {trips.map(trip => (
                                 <option key={trip.id} value={trip.id}>
-                                    {trip.trip_name} ({new Date(trip.trip_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})
+                                    {trip.trip_name} ({new Date(trip.trip_date).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})
                                 </option>
                             ))}
                         </select>
                         {trips.length === 0 && (
                             <small style={{ color: 'var(--danger)' }}>
-                                No trips available. {userRole === 'admin' ? 'Create a trip first.' : 'Ask an admin to create a trip.'}
+                                {userRole === 'admin' ? t('formNoTripsAdmin') : t('formNoTrips')}
                             </small>
                         )}
                     </div>
 
                     {/* Customer Name */}
                     <div className="form-group">
-                        <label htmlFor="client_name">Customer Name <span style={{ color: 'var(--danger)' }}>*</span></label>
+                        <label htmlFor="client_name">{t('formCustomerName')} <span style={{ color: 'var(--danger)' }}>*</span></label>
                         <input
                             type="text"
                             id="client_name"
                             name="client_name"
                             value={form.client_name}
                             onChange={handleChange}
-                            placeholder="Full name of the customer"
+                            placeholder={t('formCustomerNamePlaceholder')}
                             required
                         />
                     </div>
 
                     {/* Mobile Number */}
                     <div className="form-group">
-                        <label htmlFor="mobile_number">Mobile Number <span style={{ color: 'var(--danger)' }}>*</span></label>
+                        <label htmlFor="mobile_number">{t('formMobileNumber')} <span style={{ color: 'var(--danger)' }}>*</span></label>
                         <input
                             type="tel"
                             id="mobile_number"
                             name="mobile_number"
                             value={form.mobile_number}
                             onChange={handleChange}
-                            placeholder="e.g. 01012345678"
+                            placeholder={t('formMobileNumberPlaceholder')}
                             required
                         />
-                        <small>Each mobile number can only be registered once per trip.</small>
+                        <small>{t('formMobileHint')}</small>
                     </div>
 
                     {/* Number of Persons */}
                     <div className="form-group">
-                        <label htmlFor="no_of_persons">Number of Persons <span style={{ color: 'var(--danger)' }}>*</span></label>
+                        <label htmlFor="no_of_persons">{t('formNoOfPersons')} <span style={{ color: 'var(--danger)' }}>*</span></label>
                         <input
                             type="number"
                             id="no_of_persons"
@@ -136,14 +138,14 @@ export default function Form({ trips, userRole, onAddBooking }) {
 
                     {/* Notes */}
                     <div className="form-group">
-                        <label htmlFor="notes">Notes (Optional)</label>
+                        <label htmlFor="notes">{t('tripNotesLabel')}</label>
                         <textarea
                             id="notes"
                             name="notes"
                             rows={3}
                             value={form.notes}
                             onChange={handleChange}
-                            placeholder="Any special requirements or additional info..."
+                            placeholder={t('tripNotesPlaceholder')}
                             style={{ resize: 'vertical' }}
                         />
                     </div>
@@ -154,14 +156,14 @@ export default function Form({ trips, userRole, onAddBooking }) {
                             disabled={submitting || trips.length === 0}
                             style={{ flex: 1 }}
                         >
-                            {submitting ? 'Saving...' : '✅ Add Booking'}
+                            {submitting ? t('btnSaving') : t('btnAddBooking')}
                         </button>
                         <button
                             type="button"
                             onClick={() => navigate('/')}
                             style={{ flex: 1, background: '#64748b' }}
                         >
-                            Cancel
+                            {t('btnCancel')}
                         </button>
                     </div>
                 </form>

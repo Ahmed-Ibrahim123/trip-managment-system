@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useSettings } from './contexts/SettingsContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -7,6 +8,7 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
     const { tripId } = useParams();
     const navigate = useNavigate();
     const isAdmin = userRole === 'admin';
+    const { t, language } = useSettings();
 
     const [trip, setTrip] = useState(null);
     const [bookings, setBookings] = useState([]);
@@ -40,11 +42,11 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
             setTrip(tripData);
             setBookings(Array.isArray(bookingsData) ? bookingsData : []);
         } catch (err) {
-            setError(err.message || 'Failed to load trip data.');
+            setError(err.message || (language === 'ar' ? 'فشل في تحميل بيانات الرحلة.' : 'Failed to load trip data.'));
         } finally {
             setLoading(false);
         }
-    }, [tripId]);
+    }, [tripId, language]);
 
     useEffect(() => {
         fetchTripData();
@@ -87,18 +89,19 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
             // Refresh totals
             fetchTripData();
         } else {
-            setEditError(result.error || 'Failed to update booking.');
+            setEditError(result.error || (language === 'ar' ? 'فشل في تحديث الحجز.' : 'Failed to update booking.'));
         }
     };
 
     const handleDelete = async (id) => {
-        if (!window.confirm('Are you sure you want to delete this booking?')) return;
+        const confirmMsg = language === 'ar' ? 'هل أنت متأكد من حذف هذا الحجز؟' : 'Are you sure you want to delete this booking?';
+        if (!window.confirm(confirmMsg)) return;
         const result = await onDeleteBooking(id);
         if (result.success) {
             setBookings(prev => prev.filter(b => b.id !== id));
             fetchTripData();
         } else {
-            alert(result.error || 'Failed to delete booking.');
+            alert(result.error || (language === 'ar' ? 'فشل في حذف الحجز.' : 'Failed to delete booking.'));
         }
     };
 
@@ -107,7 +110,7 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
             <div className="app-container">
                 <div style={{ textAlign: 'center', padding: '80px', color: 'var(--text-muted)' }}>
                     <div className="loading-spinner" />
-                    <p style={{ marginTop: '16px' }}>Loading trip data...</p>
+                    <p style={{ marginTop: '16px' }}>{language === 'ar' ? 'جاري تحميل بيانات الرحلة...' : 'Loading trip data...'}</p>
                 </div>
             </div>
         );
@@ -116,9 +119,9 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
     if (error || !trip) {
         return (
             <div className="app-container">
-                <div className="alert error">{error || 'Trip not found.'}</div>
+                <div className="alert error">{error || (language === 'ar' ? 'لم يتم العثور على الرحلة.' : 'Trip not found.')}</div>
                 <button onClick={() => navigate('/')} style={{ width: 'auto', padding: '10px 24px' }}>
-                    ← Back to Trips
+                    {t('btnBackToTrips')}
                 </button>
             </div>
         );
@@ -131,7 +134,7 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
                 onClick={() => navigate('/')}
                 className="back-btn"
             >
-                ← Back to Trips
+                {t('btnBackToTrips')}
             </button>
 
             {/* Trip Header Banner */}
@@ -142,7 +145,7 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
                         <h2 style={{ margin: 0 }}>{trip.trip_name}</h2>
                     </div>
                     <p style={{ color: 'var(--text-muted)', margin: '8px 0 0 0' }}>
-                        📅 {new Date(trip.trip_date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                        📅 {new Date(trip.trip_date).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                     </p>
                     {trip.notes && (
                         <p style={{ color: 'var(--text-muted)', margin: '6px 0 0 0', fontSize: '0.9rem', fontStyle: 'italic' }}>
@@ -153,11 +156,11 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
                 <div className="trip-header-stats">
                     <div className="trip-summary-stat">
                         <span className="trip-summary-value">{trip.booking_count}</span>
-                        <span className="trip-summary-label">Bookings</span>
+                        <span className="trip-summary-label">{t('tripBookings')}</span>
                     </div>
                     <div className="trip-summary-stat">
                         <span className="trip-summary-value">{trip.total_persons}</span>
-                        <span className="trip-summary-label">Total Guests</span>
+                        <span className="trip-summary-label">{t('tripGuests')}</span>
                     </div>
                 </div>
             </div>
@@ -165,31 +168,30 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
             {/* Bookings Table */}
             <div className="card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-                    <h3>📋 Bookings for this Trip</h3>
+                    <h3>📋 {t('recentBookings')}</h3>
                     <button
                         onClick={() => navigate('/add-booking')}
                         style={{ width: 'auto', padding: '10px 20px', fontSize: '0.9rem' }}
                     >
-                        ➕ Add Booking
+                        {t('addBookingTitle')}
                     </button>
                 </div>
 
                 {bookings.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
                         <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>📭</div>
-                        <p>No bookings for this trip yet.</p>
+                        <p>{t('noBookingsYet')}</p>
                     </div>
                 ) : (
                     <div className="table-responsive">
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Customer Name</th>
-                                    <th>Mobile Number</th>
-                                    <th>No. of Persons</th>
-                                    <th>Notes</th>
-                                    <th>Created By</th>
-                                    <th>Actions</th>
+                                    <th>{t('colClientName')}</th>
+                                    <th>{t('colMobile')}</th>
+                                    <th>{t('colPersons')}</th>
+                                    <th>{t('colNotes')}</th>
+                                    <th>{t('colActions')}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -229,9 +231,6 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
                                                     />
                                                 </td>
                                                 <td>
-                                                    <span className="role-tag">{booking.created_by || 'Unknown'}</span>
-                                                </td>
-                                                <td>
                                                     {editError && (
                                                         <div style={{ color: 'var(--danger)', fontSize: '0.78rem', marginBottom: '6px' }}>
                                                             {editError}
@@ -243,13 +242,13 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
                                                             disabled={editSaving}
                                                             style={{ width: 'auto', padding: '6px 14px', fontSize: '0.85rem' }}
                                                         >
-                                                            {editSaving ? '...' : 'Save'}
+                                                            {editSaving ? '...' : t('btnSave')}
                                                         </button>
                                                         <button
                                                             onClick={() => { setEditingId(null); setEditError(''); }}
                                                             style={{ width: 'auto', padding: '6px 14px', fontSize: '0.85rem', background: '#64748b' }}
                                                         >
-                                                            Cancel
+                                                            {t('btnCancel')}
                                                         </button>
                                                     </div>
                                                 </td>
@@ -262,21 +261,20 @@ export default function TripDashboard({ trips, userRole, onUpdateBooking, onDele
                                                     <span className="persons-badge">{booking.no_of_persons}</span>
                                                 </td>
                                                 <td>{booking.notes || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                                                <td><span className="role-tag">{booking.created_by || 'Unknown'}</span></td>
                                                 <td>
                                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                                                         <button
                                                             onClick={() => startEditing(booking)}
                                                             style={{ width: 'auto', padding: '6px 14px', fontSize: '0.85rem', background: '#3b82f6' }}
                                                         >
-                                                            Edit
+                                                            {t('btnEdit')}
                                                         </button>
                                                         {isAdmin && (
                                                             <button
                                                                 className="delete-btn"
                                                                 onClick={() => handleDelete(booking.id)}
                                                             >
-                                                                Delete
+                                                                {t('btnDelete')}
                                                             </button>
                                                         )}
                                                     </div>
